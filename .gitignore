@@ -7,3 +7,6 @@ __pycache__/
 apartment_screening_auto.csv
 apartment_screening_auto.xlsx
 apartment_screening_auto_summary.docx
+*_screening.csv
+*_screening.xlsx
+*_screening_summary.docx

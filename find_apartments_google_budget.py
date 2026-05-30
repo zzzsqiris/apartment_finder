@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Budget-capped UCLA apartment finder using Google Maps APIs.
+"""Budget-capped apartment finder using Google Maps APIs.
 
 The goal is to spend as little as possible while improving recall and route
 accuracy beyond the free OpenStreetMap pass. It combines:
@@ -762,8 +762,8 @@ def main() -> int:
     tracker = CostTracker(args.budget_usd)
 
     osm_names = load_osm_names(args.osm_markdown)
-    seeds = dedupe_strings([*args.seed, "Lindbrook Manor"])
-    areas = dedupe_strings(args.area or ["Westwood", "Westwood Village", "Wilshire Corridor"])
+    seeds = dedupe_strings(args.seed)
+    areas = dedupe_strings(args.area)
     queries = build_queries(args.school, areas, seeds, osm_names)
     conservative_text_cost = (len(queries) + len(areas) + 3) * TEXT_SEARCH_USD_PER_1000 / 1000
     route_elements = 0 if args.skip_routes else args.max_candidates * 2
