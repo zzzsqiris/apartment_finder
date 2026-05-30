@@ -51,6 +51,8 @@ fi
 radius_meters="$(prompt_default "Search radius in meters" "2200")"
 max_walk_minutes="$(prompt_default "Max walking minutes; used only if routes are enabled" "20")"
 rent_budget="$(prompt_default "Rent budget for screening" "2500")"
+target_units="$(prompt_default "Acceptable unit types, comma-separated" "studio,1b1b")"
+private_bath_mode="$(prompt_default "Private bathroom preference: any/prefer/require" "any")"
 api_budget="$(prompt_default "Google API budget cap for this run" "5")"
 skip_routes_answer="$(prompt_default "Skip route calculation to save money? yes/no" "yes")"
 areas_csv="$(prompt_optional "Optional neighborhood/commercial areas, comma-separated; press Enter to skip")"
@@ -115,6 +117,8 @@ printf "\nStep 3/3: screening apartment websites with rent budget $%s...\n" "$re
 python3 screen_apartments_from_web.py \
   --input "$clean_csv" \
   --budget "$rent_budget" \
+  --target-units "$target_units" \
+  --private-bath "$private_bath_mode" \
   --output-csv "$screen_csv" \
   --output-xlsx "$screen_xlsx" \
   --output-docx "$screen_docx"

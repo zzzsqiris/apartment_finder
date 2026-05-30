@@ -37,8 +37,8 @@ DEFAULT_OUTPUT_DOCX = "apartment_screening_auto_summary.docx"
 DEFAULT_CACHE_DIR = ".web_cache"
 DEFAULT_OVERRIDES = "manual_overrides.json"
 
-TARGET_UNIT_RE = re.compile(
-    r"\b(studio|bachelor|junior\s*-?\s*1|junior\s+one|1\s*bed(?:room)?|one\s*bed(?:room)?|1b1b|1\s*br)\b",
+UNIT_RE = re.compile(
+    r"\b(studio|bachelor|junior\s*-?\s*1|junior\s+one|[1-6]\s*(?:b|x|bed|beds|bedroom|bedrooms|br)\s*[/-]?\s*[1-6]?\s*(?:b|bath|baths|bathroom|bathrooms|ba)?|[1-6]\s*bed(?:room)?(?:\s*/\s*[1-6]\s*bath(?:room)?)?|one\s*bed(?:room)?)\b",
     re.IGNORECASE,
 )
 PRICE_RE = re.compile(r"\$\s?([1-9]\d{2,4})(?:[,\d]{0,4})?(?:\s?(?:-|to)\s?\$?\s?([1-9]\d{2,4}))?", re.IGNORECASE)
@@ -46,6 +46,11 @@ SQFT_RE = re.compile(r"\b(\d{3,4})\s*(?:-|to)?\s*(\d{3,4})?\s*(?:sq\.?\s*ft\.?|s
 LAUNDRY_RE = re.compile(r"\b(washer|dryer|laundry|washers|dryers|w/d|in-unit|in unit|in-home|in home)\b", re.IGNORECASE)
 PARKING_RE = re.compile(r"\b(parking|garage|assigned|covered|gated|tandem|ev charging|reserved)\b", re.IGNORECASE)
 PET_RE = re.compile(r"\b(pet|pets|cat|dog|animal)\b", re.IGNORECASE)
+BATH_RE = re.compile(r"\b(private bath(?:room)?|private ensuite|en[- ]?suite|own bath(?:room)?|shared bath(?:room)?|bath(?:room)?|[1-6]\s*bath(?:room)?|[1-6]ba)\b", re.IGNORECASE)
+PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
+CALL_RE = re.compile(r"\b(call|contact|phone|leasing office|schedule a tour|details|pricing)\b", re.IGNORECASE)
+PER_PERSON_RE = re.compile(r"\b(per person|/person|per bed|/bed|per bedroom|individual lease|by the bed|bedspace|roommate matching)\b", re.IGNORECASE)
+WHOLE_UNIT_RE = re.compile(r"\b(per unit|whole unit|entire unit|entire apartment|full apartment|monthly rent|rent/month|apartment rent)\b", re.IGNORECASE)
 
 BAD_PRICE_CONTEXT = re.compile(r"\b(application|admin|deposit|fee|pet|parking|garage|utility|utilities|income|holding)\b", re.IGNORECASE)
 NEGATIVE_IN_UNIT_RE = re.compile(r"\b(no|not|without|shared|community|common|laundry room|facility|facilities)\b", re.IGNORECASE)
@@ -61,6 +66,8 @@ LINK_KEYWORDS = (
     "faq",
     "parking",
     "pet",
+    "contact",
+    "lease",
     "gallery",
 )
 
@@ -114,12 +121,16 @@ class ScreenResult:
     distance_meters: str
     website: str
     target_unit: str = "Unknown"
+    matched_target: str = "No"
     price_text: str = "Unknown"
     price_min: int | None = None
+    price_basis: str = "Unknown"
     sqft_text: str = "Unknown"
+    private_bath: str = "Unknown"
     laundry: str = "Unknown"
     parking: str = "Unknown"
     pet_policy: str = "Not ranked"
+    phone: str = "Unknown"
     fit_status: str = "Needs review"
     confidence: str = "Low"
     evidence: str = ""
@@ -136,6 +147,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR)
     parser.add_argument("--overrides", default=DEFAULT_OVERRIDES)
     parser.add_argument("--budget", type=int, default=2500)
+    parser.add_argument(
+        "--target-units",
+        default="studio,1b1b",
+        help="Comma-separated acceptable unit types, e.g. studio,1b1b,2b2b,3b3b.",
+    )
+    parser.add_argument(
+        "--private-bath",
+        choices=["any", "prefer", "require"],
+        default="any",
+        help="Whether private bathroom should affect sorting/status.",
+    )
     parser.add_argument("--max-pages-per-site", type=int, default=5)
     parser.add_argument("--delay-seconds", type=float, default=0.4)
     parser.add_argument("--limit", type=int, default=0, help="For testing: only process the first N website rows.")
@@ -162,16 +184,19 @@ def main() -> int:
             cache_dir=cache_dir,
             overrides=overrides.get(normalize_name(name), {}),
             budget=args.budget,
+            acceptable_units=parse_unit_preferences(args.target_units),
+            private_bath_mode=args.private_bath,
             max_pages=args.max_pages_per_site,
             delay_seconds=args.delay_seconds,
             cache_only=args.cache_only,
         )
         results.append(result)
 
-    results.sort(key=lambda item: sort_key(item, args.budget))
+    acceptable_units = parse_unit_preferences(args.target_units)
+    results.sort(key=lambda item: sort_key(item, args.budget, args.private_bath))
     write_csv(args.output_csv, results)
     write_xlsx(args.output_xlsx, results)
-    write_docx(args.output_docx, results, args.budget)
+    write_docx(args.output_docx, results, args.budget, acceptable_units, args.private_bath)
     print(f"Wrote {args.output_csv}, {args.output_xlsx}, and {args.output_docx}")
     return 0
 
@@ -196,6 +221,8 @@ def screen_row(
     cache_dir: Path,
     overrides: dict[str, object],
     budget: int,
+    acceptable_units: list[dict[str, int | str | None]],
+    private_bath_mode: str,
     max_pages: int,
     delay_seconds: float,
     cache_only: bool,
@@ -213,7 +240,7 @@ def screen_row(
     result.pages_checked = " | ".join(page.url for page in pages)
 
     if combined_text:
-        extracted = extract_fields(combined_text, budget)
+        extracted = extract_fields(combined_text, budget, acceptable_units)
         for key, value in extracted.items():
             setattr(result, key, value)
     else:
@@ -221,7 +248,7 @@ def screen_row(
         result.notes = f"No page text extracted. {errors}".strip()
 
     apply_overrides(result, overrides)
-    result.fit_status = fit_status(result, budget)
+    result.fit_status = fit_status(result, budget, private_bath_mode)
     result.confidence = confidence(result)
     return result
 
@@ -296,27 +323,75 @@ def discover_candidate_urls(base_url: str, links: list[str]) -> list[str]:
     return unique_keep_order(result)
 
 
-def extract_fields(text: str, budget: int) -> dict[str, object]:
-    target_contexts = contexts(text, TARGET_UNIT_RE, radius=110)
+def parse_unit_preferences(value: str) -> list[dict[str, int | str | None]]:
+    units = []
+    for raw in value.split(","):
+        parsed = parse_unit_label(raw)
+        if parsed and parsed not in units:
+            units.append(parsed)
+    return units or [parse_unit_label("studio"), parse_unit_label("1b1b")]
+
+
+def parse_unit_label(value: str) -> dict[str, int | str | None] | None:
+    text = normalize_name(value)
+    if not text:
+        return None
+    if "studio" in text or "bachelor" in text:
+        return {"label": "Studio", "beds": 0, "baths": 1}
+    if "junior" in text:
+        return {"label": "Junior 1", "beds": 1, "baths": 1}
+    if "one bed" in text:
+        return {"label": "1B1B", "beds": 1, "baths": 1}
+    numbers = [int(number) for number in re.findall(r"[1-6]", text)]
+    if numbers:
+        beds = numbers[0]
+        baths = numbers[1] if len(numbers) > 1 else None
+        label = f"{beds}B{baths}B" if baths is not None else f"{beds}B"
+        return {"label": label, "beds": beds, "baths": baths}
+    return None
+
+
+def unit_matches_preferences(unit_label: str, acceptable_units: list[dict[str, int | str | None]]) -> bool:
+    parsed = parse_unit_label(unit_label)
+    if not parsed:
+        return False
+    for target in acceptable_units:
+        if parsed["beds"] != target["beds"]:
+            continue
+        if target["baths"] is None or parsed["baths"] is None or parsed["baths"] == target["baths"]:
+            return True
+    return False
+
+
+def extract_fields(text: str, budget: int, acceptable_units: list[dict[str, int | str | None]]) -> dict[str, object]:
+    unit_contexts = contexts(text, UNIT_RE, radius=120)
     price_contexts = [ctx for ctx in contexts(text, PRICE_RE, radius=90) if not BAD_PRICE_CONTEXT.search(ctx)]
     sqft_contexts = contexts(text, SQFT_RE, radius=60)
     laundry_contexts = contexts(text, LAUNDRY_RE, radius=95)
     parking_contexts = contexts(text, PARKING_RE, radius=85)
     pet_contexts = contexts(text, PET_RE, radius=85)
+    bath_contexts = contexts(text, BATH_RE, radius=95)
+    call_contexts = contexts(text, CALL_RE, radius=95)
 
-    price_values = extract_price_values(price_contexts)
-    price_min = min(price_values) if price_values else None
+    unit_summary = summarize_units(unit_contexts)
+    matched_target = summarize_matching_units(unit_summary, acceptable_units)
+    price_values = extract_price_values(price_contexts, matched_target, acceptable_units)
+    price_min = min([item["per_person"] for item in price_values], default=None)
 
     return {
-        "target_unit": summarize_target_units(target_contexts),
+        "target_unit": matched_target if matched_target != "Unknown" else unit_summary,
+        "matched_target": "Yes" if matched_target != "Unknown" else "No",
         "price_text": summarize_price(price_values),
         "price_min": price_min,
+        "price_basis": summarize_price_basis(price_values),
         "sqft_text": summarize_matches(sqft_contexts, SQFT_RE, "Unknown"),
+        "private_bath": summarize_private_bath(bath_contexts, matched_target),
         "laundry": summarize_laundry(laundry_contexts),
         "parking": summarize_signal(parking_contexts, "Unknown"),
         "pet_policy": summarize_signal(pet_contexts, "Not ranked"),
-        "evidence": compact_evidence(target_contexts + price_contexts[:3] + sqft_contexts[:2] + laundry_contexts[:2] + parking_contexts[:2]),
-        "notes": notes_for_extraction(price_min, budget, target_contexts, laundry_contexts),
+        "phone": summarize_phone(text, call_contexts),
+        "evidence": compact_evidence(unit_contexts + price_contexts[:3] + sqft_contexts[:2] + bath_contexts[:2] + laundry_contexts[:2] + parking_contexts[:2] + call_contexts[:2]),
+        "notes": notes_for_extraction(price_min, budget, matched_target, laundry_contexts, call_contexts),
     }
 
 
@@ -329,8 +404,13 @@ def contexts(text: str, pattern: re.Pattern[str], radius: int) -> list[str]:
     return unique_keep_order(result)[:12]
 
 
-def extract_price_values(price_contexts: list[str]) -> list[int]:
+def extract_price_values(
+    price_contexts: list[str],
+    matched_target: str,
+    acceptable_units: list[dict[str, int | str | None]],
+) -> list[dict[str, int | str]]:
     values = []
+    target_beds = best_bed_count(matched_target, acceptable_units)
     for context in price_contexts:
         for match in PRICE_RE.finditer(context):
             for group in match.groups():
@@ -340,11 +420,20 @@ def extract_price_values(price_contexts: list[str]) -> list[int]:
                 if digits:
                     value = int(digits)
                     if 900 <= value <= 10000:
-                        values.append(value)
+                        basis = price_basis_from_context(context)
+                        per_person = normalize_price_to_per_person(value, basis, target_beds)
+                        values.append(
+                            {
+                                "raw": value,
+                                "per_person": per_person,
+                                "basis": basis,
+                                "context": clean_snippet(context)[:260],
+                            }
+                        )
     return values
 
 
-def summarize_target_units(contexts_: list[str]) -> str:
+def summarize_units(contexts_: list[str]) -> str:
     if not contexts_:
         return "Unknown"
     found = set()
@@ -355,16 +444,63 @@ def summarize_target_units(contexts_: list[str]) -> str:
         found.add("Junior 1")
     if re.search(r"\b(1\s*bed|one\s*bed|1b1b|1\s*br)\b", joined):
         found.add("1B1B")
+    for match in re.finditer(r"\b([1-6])\s*(?:b|x|bed|beds|bedroom|bedrooms|br)\s*[/-]?\s*([1-6])?\s*(?:b|bath|baths|bathroom|bathrooms|ba)?\b", joined):
+        beds = int(match.group(1))
+        baths = int(match.group(2)) if match.group(2) else None
+        found.add(f"{beds}B{baths}B" if baths else f"{beds}B")
     return ", ".join(sorted(found)) if found else "Target unit mentioned"
 
 
-def summarize_price(values: list[int]) -> str:
+def summarize_matching_units(unit_summary: str, acceptable_units: list[dict[str, int | str | None]]) -> str:
+    if unit_summary == "Unknown":
+        return "Unknown"
+    matches = []
+    for unit in [item.strip() for item in unit_summary.split(",")]:
+        if unit_matches_preferences(unit, acceptable_units):
+            matches.append(unit)
+    return ", ".join(unique_keep_order(matches)) if matches else "Unknown"
+
+
+def summarize_price(values: list[dict[str, int | str]]) -> str:
     if not values:
         return "Unknown"
-    values = sorted(set(values))
-    if len(values) == 1:
-        return f"${values[0]:,}"
-    return f"${values[0]:,}+; found range up to ${values[-1]:,}"
+    per_person_values = sorted(set(int(item["per_person"]) for item in values))
+    if len(per_person_values) == 1:
+        return f"${per_person_values[0]:,} per person"
+    return f"${per_person_values[0]:,}+ per person; found up to ${per_person_values[-1]:,}"
+
+
+def summarize_price_basis(values: list[dict[str, int | str]]) -> str:
+    if not values:
+        return "Unknown"
+    bases = unique_keep_order([str(item["basis"]) for item in values])
+    return ", ".join(bases)
+
+
+def price_basis_from_context(context: str) -> str:
+    if PER_PERSON_RE.search(context):
+        return "per person"
+    if WHOLE_UNIT_RE.search(context):
+        return "whole unit"
+    return "unknown; treated as per person"
+
+
+def normalize_price_to_per_person(value: int, basis: str, target_beds: int | None) -> int:
+    if basis == "whole unit" and target_beds and target_beds > 1:
+        return round(value / target_beds)
+    return value
+
+
+def best_bed_count(matched_target: str, acceptable_units: list[dict[str, int | str | None]]) -> int | None:
+    if matched_target != "Unknown":
+        parsed = parse_unit_label(matched_target.split(",")[0])
+        if parsed:
+            return int(parsed["beds"] or 1)
+    for target in acceptable_units:
+        beds = target.get("beds")
+        if isinstance(beds, int):
+            return max(1, beds)
+    return None
 
 
 def summarize_matches(contexts_: list[str], pattern: re.Pattern[str], default: str) -> str:
@@ -388,6 +524,28 @@ def summarize_laundry(contexts_: list[str]) -> str:
     return summarize_signal(contexts_, "Laundry mentioned; verify type")
 
 
+def summarize_private_bath(contexts_: list[str], matched_target: str) -> str:
+    if not contexts_:
+        return "Unknown"
+    joined = " ".join(contexts_).lower()
+    if re.search(r"\b(private bath|private bathroom|private ensuite|en[- ]?suite|own bathroom|own bath)\b", joined):
+        return "Yes / likely private bathroom"
+    if "shared bath" in joined or "shared bathroom" in joined:
+        return "No / shared bathroom mentioned"
+    parsed = parse_unit_label(matched_target.split(",")[0]) if matched_target != "Unknown" else None
+    if parsed and parsed["beds"] and parsed["baths"] and parsed["beds"] == parsed["baths"] and parsed["beds"] >= 2:
+        return "Likely yes based on bed/bath count"
+    return summarize_signal(contexts_, "Bathroom mentioned; verify private/shared")
+
+
+def summarize_phone(text: str, call_contexts: list[str]) -> str:
+    search_text = " ".join(call_contexts) if call_contexts else text[:5000]
+    phones = unique_keep_order(PHONE_RE.findall(search_text))
+    if not phones and CALL_RE.search(text):
+        phones = unique_keep_order(PHONE_RE.findall(text[:12000]))
+    return ", ".join(phones[:3]) if phones else "Unknown"
+
+
 def summarize_signal(contexts_: list[str], default: str) -> str:
     if not contexts_:
         return default
@@ -398,16 +556,24 @@ def compact_evidence(snippets: list[str]) -> str:
     return " || ".join(unique_keep_order(snippets)[:8])[:1800]
 
 
-def notes_for_extraction(price_min: int | None, budget: int, target_contexts: list[str], laundry_contexts: list[str]) -> str:
+def notes_for_extraction(
+    price_min: int | None,
+    budget: int,
+    matched_target: str,
+    laundry_contexts: list[str],
+    call_contexts: list[str],
+) -> str:
     notes = []
     if price_min is None:
         notes.append("Price not found in public text.")
     elif price_min > budget:
-        notes.append("Lowest extracted price is over budget.")
-    if not target_contexts:
-        notes.append("Target Studio/1B1B wording not found.")
+        notes.append("Lowest extracted per-person price is over budget.")
+    if matched_target == "Unknown":
+        notes.append("Requested unit type not found.")
     if not laundry_contexts:
         notes.append("Laundry wording not found.")
+    if call_contexts:
+        notes.append("Call/contact wording found; use phone column if price needs confirmation.")
     return " ".join(notes)
 
 
@@ -415,29 +581,36 @@ def apply_overrides(result: ScreenResult, overrides: dict[str, object]) -> None:
     for key, value in overrides.items():
         if hasattr(result, key):
             setattr(result, key, value)
+    if overrides and result.target_unit != "Unknown" and result.matched_target == "No":
+        result.matched_target = "Yes"
+    if overrides and result.price_min is not None and result.price_basis == "Unknown":
+        result.price_basis = "manual / per person unless noted"
     if overrides:
         note = "Manual override applied."
         result.notes = f"{result.notes} {note}".strip()
 
 
-def fit_status(result: ScreenResult, budget: int) -> str:
-    has_unit = result.target_unit != "Unknown"
+def fit_status(result: ScreenResult, budget: int, private_bath_mode: str) -> str:
+    has_unit = result.matched_target == "Yes"
     under_budget = result.price_min is not None and result.price_min <= budget
     has_in_unit = "in-unit" in result.laundry.lower() or "in home" in result.laundry.lower() or "in-home" in result.laundry.lower()
-    if has_unit and under_budget and has_in_unit:
+    private_ok = private_bath_mode != "require" or result.private_bath.lower().startswith("yes") or "likely yes" in result.private_bath.lower()
+    if has_unit and under_budget and has_in_unit and private_ok:
         return "Strong fit"
-    if has_unit and under_budget:
+    if has_unit and under_budget and private_ok:
         return "Budget fit; laundry tradeoff"
+    if has_unit and under_budget and not private_ok:
+        return "Budget fit; bathroom tradeoff"
     if has_unit and has_in_unit:
         return "Feature fit; price unknown/over"
     if has_unit:
-        return "Target unit found; price/laundry needs review"
+        return "Target unit found; price/details need review"
     return "Needs review"
 
 
 def confidence(result: ScreenResult) -> str:
     score = 0
-    if result.target_unit != "Unknown":
+    if result.matched_target == "Yes":
         score += 1
     if result.price_min is not None:
         score += 1
@@ -446,6 +619,10 @@ def confidence(result: ScreenResult) -> str:
     if result.laundry != "Unknown":
         score += 1
     if result.parking != "Unknown":
+        score += 1
+    if result.private_bath != "Unknown":
+        score += 1
+    if result.phone != "Unknown":
         score += 1
     if "Manual override applied" in result.notes:
         score += 2
@@ -456,12 +633,15 @@ def confidence(result: ScreenResult) -> str:
     return "Low"
 
 
-def sort_key(result: ScreenResult, budget: int) -> tuple[int, int, int, int, str]:
-    has_unit = 0 if result.target_unit != "Unknown" else 1
+def sort_key(result: ScreenResult, budget: int, private_bath_mode: str) -> tuple[int, int, int, int, int, str]:
+    has_unit = 0 if result.matched_target == "Yes" else 1
     under_budget = 0 if result.price_min is not None and result.price_min <= budget else 1
+    private_bath = 0 if result.private_bath.lower().startswith("yes") or "likely yes" in result.private_bath.lower() else 1
+    if private_bath_mode == "any":
+        private_bath = 0
     in_unit = 0 if "in-unit" in result.laundry.lower() or "in-home" in result.laundry.lower() else 1
     price = result.price_min if result.price_min is not None else 999999
-    return (has_unit, under_budget, in_unit, price, result.name.lower())
+    return (has_unit, under_budget, private_bath, in_unit, price, result.name.lower())
 
 
 def write_csv(path: str, results: list[ScreenResult]) -> None:
@@ -483,13 +663,17 @@ def write_xlsx(path: str, results: list[ScreenResult]) -> None:
         "Group",
         "Address",
         "Distance meters",
-        "Target unit",
-        "Price",
-        "Price numeric",
+        "Matching unit",
+        "Matched target",
+        "Price per person",
+        "Price numeric per person",
+        "Price basis",
         "Area",
+        "Private bathroom",
         "Laundry",
         "Parking",
         "Pet policy",
+        "Phone",
         "Fit status",
         "Confidence",
         "Notes",
@@ -507,12 +691,16 @@ def write_xlsx(path: str, results: list[ScreenResult]) -> None:
                 result.address,
                 result.distance_meters,
                 result.target_unit,
+                result.matched_target,
                 result.price_text,
                 result.price_min,
+                result.price_basis,
                 result.sqft_text,
+                result.private_bath,
                 result.laundry,
                 result.parking,
                 result.pet_policy,
+                result.phone,
                 result.fit_status,
                 result.confidence,
                 result.notes,
@@ -522,7 +710,7 @@ def write_xlsx(path: str, results: list[ScreenResult]) -> None:
             ]
         )
 
-    table = Table(displayName="ApartmentScreeningAuto", ref=f"A1:R{ws.max_row}")
+    table = Table(displayName="ApartmentScreeningAuto", ref=f"A1:V{ws.max_row}")
     table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
     ws.add_table(table)
     ws.freeze_panes = "A2"
@@ -532,19 +720,23 @@ def write_xlsx(path: str, results: list[ScreenResult]) -> None:
         "C": 28,
         "D": 38,
         "E": 14,
-        "F": 18,
-        "G": 20,
-        "H": 14,
+        "F": 20,
+        "G": 14,
+        "H": 20,
         "I": 18,
-        "J": 30,
-        "K": 30,
-        "L": 24,
-        "M": 28,
-        "N": 12,
-        "O": 38,
-        "P": 42,
-        "Q": 60,
-        "R": 60,
+        "J": 26,
+        "K": 18,
+        "L": 26,
+        "M": 30,
+        "N": 30,
+        "O": 24,
+        "P": 18,
+        "Q": 30,
+        "R": 12,
+        "S": 38,
+        "T": 42,
+        "U": 60,
+        "V": 60,
     }
     for column, width in widths.items():
         ws.column_dimensions[column].width = width
@@ -555,12 +747,14 @@ def write_xlsx(path: str, results: list[ScreenResult]) -> None:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="1F4E78")
     for row in range(2, ws.max_row + 1):
-        status = ws[f"M{row}"].value
+        status = ws[f"Q{row}"].value
         fill = None
         if status == "Strong fit":
             fill = PatternFill("solid", fgColor="C6EFCE")
         elif status == "Budget fit; laundry tradeoff":
             fill = PatternFill("solid", fgColor="FFF2CC")
+        elif status == "Budget fit; bathroom tradeoff":
+            fill = PatternFill("solid", fgColor="FCE4D6")
         elif status == "Feature fit; price unknown/over":
             fill = PatternFill("solid", fgColor="D9EAF7")
         if fill:
@@ -569,7 +763,13 @@ def write_xlsx(path: str, results: list[ScreenResult]) -> None:
     wb.save(path)
 
 
-def write_docx(path: str, results: list[ScreenResult], budget: int) -> None:
+def write_docx(
+    path: str,
+    results: list[ScreenResult],
+    budget: int,
+    acceptable_units: list[dict[str, int | str | None]],
+    private_bath_mode: str,
+) -> None:
     doc = Document()
     section = doc.sections[0]
     section.top_margin = Inches(0.8)
@@ -585,16 +785,29 @@ def write_docx(path: str, results: list[ScreenResult], budget: int) -> None:
     run.bold = True
     run.font.size = Pt(18)
 
-    doc.add_paragraph(f"Target: Studio/1B1B, <= ${budget:,}, in-unit laundry preferred. Pet policy is recorded but not ranked.")
+    target_labels = ", ".join(str(unit["label"]) for unit in acceptable_units)
+    doc.add_paragraph(
+        f"Target units: {target_labels}. Budget: <= ${budget:,} per person. "
+        f"Private bathroom: {private_bath_mode}. In-unit laundry preferred. Pet policy is recorded but not ranked."
+    )
     doc.add_heading("Top Candidates", level=1)
-    shortlist = [result for result in results if result.fit_status in {"Strong fit", "Budget fit; laundry tradeoff", "Feature fit; price unknown/over"}]
-    table = doc.add_table(rows=1, cols=6)
+    shortlist = [result for result in results if result.fit_status in {"Strong fit", "Budget fit; laundry tradeoff", "Budget fit; bathroom tradeoff", "Feature fit; price unknown/over"}]
+    table = doc.add_table(rows=1, cols=8)
     table.style = "Table Grid"
-    for index, header in enumerate(["Apartment", "Unit", "Price", "Area", "Laundry", "Status"]):
+    for index, header in enumerate(["Apartment", "Unit", "Price/person", "Basis", "Area", "Private bath", "Phone", "Status"]):
         table.rows[0].cells[index].text = header
     for result in shortlist[:18]:
         cells = table.add_row().cells
-        values = [result.name, result.target_unit, result.price_text, result.sqft_text, result.laundry, result.fit_status]
+        values = [
+            result.name,
+            result.target_unit,
+            result.price_text,
+            result.price_basis,
+            result.sqft_text,
+            result.private_bath,
+            result.phone,
+            result.fit_status,
+        ]
         for index, value in enumerate(values):
             cells[index].text = str(value)
 

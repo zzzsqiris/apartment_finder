@@ -26,7 +26,9 @@ python3 -m pip install -r requirements.txt
 - 学校、地址或地点名
 - 可选坐标。如果不填，会用 Google Places 找这个地点
 - 搜索半径，比如 `2200`
-- 租金预算，比如 `2500`
+- 租金预算，比如 `2500`。多人房型会尽量按 per person 价格排序
+- 可接受房型，支持多个，比如 `studio,1b1b` 或 `2b2b,3b3b,4b4b`
+- 独立卫浴偏好：`any`、`prefer` 或 `require`
 - 本次 Google API 预算上限，比如 `5`
 - 是否跳过路线计算来省钱
 - 可选商圈关键词，比如 `Westwood, Wilshire Corridor`
@@ -94,6 +96,9 @@ python3 clean_google_budget_results.py \
 ```bash
 python3 screen_apartments_from_web.py \
   --input apartments_google_budget_clean.csv \
+  --target-units studio,1b1b,2b2b \
+  --private-bath prefer \
+  --budget 2500 \
   --output-csv apartment_screening_auto.csv \
   --output-xlsx apartment_screening_auto.xlsx \
   --output-docx apartment_screening_auto_summary.docx
@@ -110,6 +115,15 @@ python3 screen_apartments_from_web.py \
 - `apartment_screening_auto.csv`
 - `apartment_screening_auto.xlsx`
 - `apartment_screening_auto_summary.docx`
+
+筛选表会包含：
+
+- 匹配到的房型，以及是否命中用户输入的可接受房型
+- per person 价格，以及价格来源口径：per person、whole unit 或 unknown
+- 面积
+- 是否独立卫浴
+- 洗衣、停车、宠物政策
+- 如果页面提示 call/contact/pricing details，会尽量提取联系电话
 
 ## Manual Overrides
 
