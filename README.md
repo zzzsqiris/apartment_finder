@@ -1,6 +1,6 @@
 # Apartment Finder
 
-这个 repo 是一个学校/地址周边租房筛选流水线。默认示例用 UCLA，但也可以输入任意学校、地址或坐标：
+这个 repo 是一个学校、地址或坐标周边的租房筛选流水线：
 
 1. 用 Google Places 或免费 OSM 找学校附近的小区。
 2. 清洗结果，剔除明显不是公寓/住宅的地点。
@@ -32,16 +32,16 @@ python3 -m pip install -r requirements.txt
 - 可选商圈关键词，比如 `Westwood, Wilshire Corridor`
 - 可选必须检查的小区名，比如 `Lindbrook Manor`
 
-输出文件会用地点名自动命名，例如：
+输出文件会用地点名自动命名。例如搜索 `University of Southern California` 时，文件名会类似：
 
-- `ucla_apartments_google.md`
-- `ucla_apartments_clean.csv`
-- `ucla_screening.xlsx`
-- `ucla_screening_summary.docx`
+- `university_of_southern_california_apartments_google.md`
+- `university_of_southern_california_apartments_clean.csv`
+- `university_of_southern_california_screening.xlsx`
+- `university_of_southern_california_screening_summary.docx`
 
-## UCLA Example
+## Example: UCLA
 
-如果只想复现这次 UCLA 搜索，可以继续用原来的脚本：
+这个 repo 里保留了一个 UCLA 快捷脚本，用来复现最初的搜索：
 
 ```bash
 ./run_ucla_google_budget.sh
@@ -49,7 +49,7 @@ python3 -m pip install -r requirements.txt
 
 ## Manual Step 1: Search Apartments
 
-或者手动运行：
+同样的逻辑也可以手动写成任意地点，例如下面是 UCLA：
 
 ```bash
 python3 find_apartments_google_budget.py \
