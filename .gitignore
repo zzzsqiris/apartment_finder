@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.google_budget_cache.json
+.web_cache/
+apartment_screening_auto.csv
+apartment_screening_auto.xlsx
+apartment_screening_auto_summary.docx

@@ -1,0 +1,22 @@
+{
+  "Midvale Court Apartments Westwood": {
+    "target_unit": "Studio",
+    "price_text": "$2,010",
+    "price_min": 2010,
+    "sqft_text": "324 sqft",
+    "laundry": "Shared laundry on each floor",
+    "parking": "Unknown",
+    "pet_policy": "Not ranked",
+    "notes": "User-confirmed finalist detail: farther than Lindbrook Manor; no stove, but hot plate allowed."
+  },
+  "Lindbrook Manor": {
+    "target_unit": "Studio",
+    "price_text": "$2,279",
+    "price_min": 2279,
+    "sqft_text": "231 sqft",
+    "laundry": "Shared laundry for whole complex",
+    "parking": "Unknown",
+    "pet_policy": "Not ranked",
+    "notes": "User-confirmed finalist detail: closer than Midvale Court; has electric smooth-top stove."
+  }
+}
