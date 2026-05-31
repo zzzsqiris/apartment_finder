@@ -9,16 +9,42 @@
 
 ## Install
 
+Windows:
+
+```bat
+py -3 -m pip install -r requirements.txt
+```
+
+也可以双击或运行：
+
+```bat
+install_windows.bat
+```
+
+macOS / Linux:
+
 ```bash
 python3 -m pip install -r requirements.txt
 ```
 
 ## Quick Start: General Search
 
-交互式通用版：
+Windows 交互式通用版：
+
+```bat
+run_apartment_finder.bat
+```
+
+或者：
+
+```bat
+py -3 run_apartment_finder.py
+```
+
+macOS / Linux：
 
 ```bash
-./run_apartment_finder.sh
+python3 run_apartment_finder.py
 ```
 
 它会依次问你：
@@ -43,7 +69,7 @@ python3 -m pip install -r requirements.txt
 
 ## Example: UCLA
 
-这个 repo 里保留了一个 UCLA 快捷脚本，用来复现最初的搜索：
+这个 repo 里保留了一个 UCLA 快捷脚本，用来复现最初的搜索。Windows 推荐用通用入口并输入 `UCLA`；macOS / Linux 也可以用：
 
 ```bash
 ./run_ucla_google_budget.sh
@@ -104,7 +130,7 @@ python3 screen_apartments_from_web.py \
   --output-docx apartment_screening_auto_summary.docx
 ```
 
-或者直接：
+macOS / Linux 也可以直接：
 
 ```bash
 ./run_website_screening.sh
@@ -139,6 +165,13 @@ python3 screen_apartments_from_web.py \
 - `screen_apartments_from_web.py` 不使用 Google API，不花 Google Maps 钱。
 - Google Places 搜索脚本会缓存结果，重复运行会尽量复用 `.google_budget_cache.json`。
 - `--skip-routes` 会跳过 Routes API，用直线距离排序来省钱。
+
+## Windows Notes
+
+- 不需要 Git Bash。优先运行 `run_apartment_finder.bat` 或 `py -3 run_apartment_finder.py`。
+- 如果提示找不到 Python，安装 Python 3，并勾选 `Add python.exe to PATH`。
+- 如果 PowerShell 不认识 `py`，试试 `python run_apartment_finder.py`。
+- 文件路径里有空格也可以运行；脚本会自动切换到项目所在文件夹。
 
 ## Limitations
 
